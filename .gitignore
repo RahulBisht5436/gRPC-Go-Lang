@@ -1,0 +1,102 @@
+# ---------------------------------------------------------------------------
+# Go
+# ---------------------------------------------------------------------------
+
+# Compiled binaries / object files
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.o
+*.a
+
+# Test binaries and coverage output
+*.test
+*.out
+coverage.txt
+coverage.html
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
+# Dependency directories (when vendoring is used)
+vendor/
+
+# Build output directories
+/bin/
+/build/
+/dist/
+/out/
+
+# ---------------------------------------------------------------------------
+# gRPC / Protobuf
+# ---------------------------------------------------------------------------
+
+# Generated protobuf / gRPC stubs (uncomment if you do NOT want to commit them)
+# *.pb.go
+# *_grpc.pb.go
+# *_pb2.py
+# *_pb2_grpc.py
+
+# Protoc plugin downloads
+/protoc/
+/protoc-*/
+
+# ---------------------------------------------------------------------------
+# Environment & secrets
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets.yaml
+
+# ---------------------------------------------------------------------------
+# Editors / IDEs
+# ---------------------------------------------------------------------------
+
+# VS Code / Cursor
+.vscode/
+.cursor/
+
+# JetBrains (GoLand / IntelliJ)
+.idea/
+*.iml
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# OS-specific files
+# ---------------------------------------------------------------------------
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.fuse_hidden*
+.Trash-*
+
+# ---------------------------------------------------------------------------
+# Logs & temp files
+# ---------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
