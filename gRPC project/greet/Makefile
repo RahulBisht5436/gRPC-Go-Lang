@@ -19,11 +19,15 @@ else
 	BIN = proto-go-course
 endif
 
+.PHONY: build generate greet bump clean
+
 build: 	generate
 	go build -o ${BIN} .
 
 generate:
-	protoc -I${PROTO_DIR} --go_opt=module=${PACKAGE} --go_out=. ${PROTO_DIR}/*.proto
+	protoc -I${PROTO_DIR} --go_opt=module=${PACKAGE} --go_out=. --go-grpc_out=. --go-grpc_opt=module=${PACKAGE} ${PROTO_DIR}/*.proto
+
+greet: generate
 
 bump: generate
 	go get -u ./...
