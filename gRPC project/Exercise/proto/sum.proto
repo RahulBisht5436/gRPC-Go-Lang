@@ -1,0 +1,17 @@
+syntax ="proto3";
+package sum ;
+option go_package ="example.com/exercise/proto";
+
+
+message SumCalculationRequest{
+ int32 num1 = 1;
+ int32 num2 =2;
+}
+
+message SumCalculationResponse{
+    int32 result =1;
+}
+
+service SumCalc {
+    rpc SumCalculation (SumCalculationRequest) returns (SumCalculationResponse); 
+}
