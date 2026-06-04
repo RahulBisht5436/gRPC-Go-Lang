@@ -38,17 +38,3 @@ func main() {
 		log.Fatalf("Failed to server : %v", err)
 	}
 }
-
-
-| #  | Generated Name                                 | Type               | Side   | Use Kab                                      |
-| -- | ---------------------------------------------- | ------------------ | ------ | -------------------------------------------- |
-| 1  | `<ServiceName>Client`                          | Interface          | Client | Client stub ka type                          |
-| 2  | `<serviceName>Client` (lowercase first letter) | Struct (private)   | Client | Internal — ignore                            |
-| 3  | `New<ServiceName>Client`                       | Function           | Client | Stub create karne ke liye                    |
-| 4  | `<ServiceName>Server`                          | Interface          | Server | Server ko implement karna                    |
-| 5  | `Unimplemented<ServiceName>Server`             | Struct             | Server | Apne struct mein embed karna                 |
-| 6  | `Unsafe<ServiceName>Server`                    | Interface          | Server | Advanced — ignore                            |
-| 7  | `Register<ServiceName>Server`                  | Function           | Server | `main.go` mein server register karne ke liye |
-| 8  | `<ServiceName>_<MethodName>_FullMethodName`    | Const String       | Both   | Internal route — ignore                      |
-| 9  | `_<ServiceName>_<MethodName>_Handler`          | Function (private) | Server | Internal dispatch — ignore                   |
-| 10 | `<ServiceName>_ServiceDesc`                    | Variable (`var`)   | Server | Internal metadata — ignore                   |
