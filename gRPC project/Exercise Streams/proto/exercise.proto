@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package exercise;
+
+option go_package = "example.com/exercise/proto";
+
+message DivisorRequest {
+  uint32 num = 1;
+}
+
+message DivisorResponse {
+  uint32 result = 1;
+}
+
+service DivisorFinder {
+  rpc FindDivisors(DivisorRequest) returns (stream DivisorResponse);
+}
