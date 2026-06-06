@@ -1,6 +1,6 @@
-# `client/main.go` — gRPC client
+# `client/main.go` — gRPC client (Server Streaming)
 
-Server toh ban gaya, ab usko **call** karne ke liye client chahiye. Iss file ka kaam: server se connect karo, `Greet` RPC call karo, response print karo.
+Server toh ban gaya, ab usko **call** karne ke liye client chahiye. Iss file ka kaam: server se connect karo, `GreetManyTimes` RPC call karo, **stream me** aane wali multiple responses ko loop me read karo aur print karo.
 
 ## Pura file
 
@@ -9,6 +9,7 @@ package main
 
 import (
     "context"
+    "io"
     "log"
     "time"
 
@@ -20,6 +21,7 @@ import (
 var addr = "localhost:50051"
 
 func main() {
+    // insecure.NewCredentials() = no TLS (local dev only).
     conn, err := grpc.NewClient(
         addr,
         grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -34,27 +36,41 @@ func main() {
     ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
 
-    res, err := client.Greet(ctx, &pb.GreetRequest{
-        FirstName: "Rahul",
+    stream, err := client.GreetManyTimes(ctx, &pb.GreetRequest{
+        FirstName: "Rahul Bisht",
     })
+
     if err != nil {
         log.Fatalf("Greet RPC failed: %v", err)
     }
 
-    log.Printf("Greet response: %s", res.GetResult())
+    for {
+        res, err := stream.Recv()
+        if err == io.EOF {
+            break
+        }
+        if err != nil {
+            log.Fatalf("Streaming for the Request Failed")
+        }
+        log.Printf("Response: %s", res.GetResult())
+
+    }
 }
 ```
 
 ---
 
-## Client ke 4 mandatory steps
+## Client ke 5 mandatory steps (streaming version)
 
-Server me 4 steps the (listen → server → register → serve). Client me bhi 4 hote hain:
+Unary client me 4 steps the (connection → stub → context → call). Server streaming me **ek aur step add hota hai** — Recv loop:
 
 1. **Connection banao** (`grpc.NewClient`).
 2. **Typed stub banao** (`pb.NewGreetServiceClient`).
 3. **Context banao** (deadline/timeout ke saath).
-4. **RPC call karo** (jaise normal Go function).
+4. **Stream open karo** — `client.GreetManyTimes(ctx, req)` — **ye `*GreetResponse` nahi, balki `stream` object return karta hai**.
+5. **Recv loop chalao** — `stream.Recv()` ko baar-baar call karke messages padhte raho jab tak `io.EOF` na aaye.
+
+**Yahi 5th step hi server streaming ki pehchaan hai.** Unary me ye nahi hota — vahan ek RPC call = ek response.
 
 ---
 
@@ -65,6 +81,7 @@ Server me 4 steps the (listen → server → register → serve). Client me bhi 
 ```go
 import (
     "context"
+    "io"          // <-- naya import: io.EOF detect karne ke liye
     "log"
     "time"
     pb "example.com/greet/proto"
@@ -74,9 +91,12 @@ import (
 ```
 
 - `context`, `log`, `time` — standard library.
+- **`io`** — server streaming ke liye **specially zaruri**. Stream khatam hone pe `stream.Recv()` `io.EOF` return karta hai, aur tumhe `err == io.EOF` check karna padta hai.
 - `pb` — server side ki tarah, generated proto package.
 - `grpc` — gRPC runtime.
 - `credentials/insecure` — TLS off karne ke liye (sirf dev).
+
+> Pichle (unary) version me `io` import nahi hota tha — wahan ek call → ek response, EOF concept nahi tha. Yahan aaya kyunki "stream khatam" ka signal `io.EOF` hi hai.
 
 ### `var addr = "localhost:50051"`
 
@@ -106,7 +126,7 @@ Surprising fact: `grpc.NewClient` sirf ek **lazy** `*ClientConn` deta hai. Actua
 
 gRPC by default TLS expect karta hai (yaani encrypted connection). Local development me TLS setup karna jhanjat hai, isliye `insecure.NewCredentials()` use karte hain — "encryption mat lagao".
 
-> ⚠️ **Production me kabhi `insecure` mat use karo.** Vahan `credentials.NewTLS(...)` use hota hai with proper certs.
+> ⚠️ **Production me kabhi `insecure` mat use karo.** Vahan `credentials.NewTLS(...)` use hota hai with proper certs. Streaming me ye specially important — long-lived connections pe encryption critical hota hai.
 
 ```go
 if err != nil {
@@ -126,18 +146,19 @@ Go ka **`defer`** keyword: jab function return hoga, tab ye line execute hogi. Y
 client := pb.NewGreetServiceClient(conn)
 ```
 
-`conn` ek **raw pipe** hai — vo HTTP/2 frames bhej-le sakta hai but `Greet` ya `GreetRequest` ke baare me kuch nahi jaanta.
+`conn` ek **raw pipe** hai — vo HTTP/2 frames bhej-le sakta hai but `GreetManyTimes` ya `GreetRequest` ke baare me kuch nahi jaanta.
 
-`pb.NewGreetServiceClient(conn)` is raw pipe ko ek **type-safe wrapper** me badal deta hai. Ab `client` variable pe har RPC ke liye ek method available hai (yaha sirf `Greet`):
+`pb.NewGreetServiceClient(conn)` is raw pipe ko ek **type-safe wrapper** me badal deta hai. Ab `client` variable pe har RPC ke liye ek method available hai (yaha sirf `GreetManyTimes`):
 
 ```go
-client.Greet(ctx, req)        // unary
-client.GreetManyTimes(ctx, req)   // streaming, agar add karte
+client.GreetManyTimes(ctx, req)   // server streaming
 ```
 
-`NewGreetServiceClient` function bhi `protoc-gen-go-grpc` ne generate kiya tha:
+Agar proto me unary RPC bhi hota, vo bhi yahan available hota.
 
-```36:38:gRPC project/greet/proto/greet_grpc.pb.go
+`NewGreetServiceClient` function `protoc-gen-go-grpc` ne generate kiya tha:
+
+```36:38:proto/greet_grpc.pb.go
 func NewGreetServiceClient(cc grpc.ClientConnInterface) GreetServiceClient {
 	return &greetServiceClient{cc}
 }
@@ -152,39 +173,65 @@ ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 defer cancel()
 ```
 
-Saari gRPC calls **mandatory** rakhti hain context. Yaha hum 5-second timeout daal rahe hain — yaani agar 5 second me response nahi aaya, automatic cancel.
+Saari gRPC calls **mandatory** rakhti hain context. Yaha hum 5-second timeout daal rahe hain — yaani agar 5 second me **poora stream** complete na ho, automatic cancel.
 
-#### Anatomy:
+#### Streaming me timeout ka matlab thoda alag hota hai
 
-- `context.Background()` — empty/root context. "Kuch deadline nahi, kuch cancellation nahi".
-- `context.WithTimeout(parent, 5s)` — root pe 5-second deadline lagai.
-- Returns 2 cheezein:
-  - `ctx` — naya context jisme deadline hai.
-  - `cancel` — ek function jo manually cancellation trigger karta hai.
+Unary me 5-second timeout = "single response 5 sec me aana chahiye".
+
+Server streaming me 5-second timeout = "**poora stream** (saare messages + final close) 5 sec me aana chahiye". Agar server 4 messages 1 sec me bhej de aur 5th pe 6 sec laga, to overall timeout exceed hoga aur stream cancel ho jaayega.
+
+Real-world streaming me kabhi-kabhi `context.Background()` (no timeout) bhi acceptable hota hai — long-lived streams (hours, days) ke liye. But fir manual cancellation handle (`context.WithCancel`) zaruri hai.
 
 #### `defer cancel()` kyu zaruri?
 
-Agar tum `cancel()` call nahi karte, to `WithTimeout` ki internal goroutine 5 seconds tak alive rehti hai (memory leak). `defer cancel()` ensure karta hai jaise hi function return ho, cleanup ho jaaye. Even if RPC 1 second me return ho gayi, fir bhi `cancel()` call hoga — ye safe hai (idempotent).
+Agar tum `cancel()` call nahi karte, to `WithTimeout` ki internal goroutine 5 seconds tak alive rehti hai (memory leak). `defer cancel()` ensure karta hai jaise hi function return ho, cleanup ho jaaye.
 
 > **Habit banao**: jab bhi `context.WithSomething(...)` likho, agli line pe `defer cancel()` likho. Hamesha.
 
-### Step 4: RPC call
+### Step 4: Stream open karo
 
 ```go
-res, err := client.Greet(ctx, &pb.GreetRequest{
-    FirstName: "Rahul",
+stream, err := client.GreetManyTimes(ctx, &pb.GreetRequest{
+    FirstName: "Rahul Bisht",
 })
 ```
 
-Ye **dikhne me** normal Go function call lagta hai. Lekin actually:
+**Yahan unary se sabse bada conceptual difference hai.** Look at the return type:
 
-1. `client.Greet` generated stub method hai.
-2. Vo `&pb.GreetRequest{FirstName: "Rahul"}` ko protobuf bytes me serialize karta hai.
-3. `conn` ke through HTTP/2 request bhejta hai server ko, path = `/greet.GreetService/Greet`.
-4. Server response ke bytes wapas aate hain.
-5. Stub unhe `*pb.GreetResponse` me deserialize karke deta hai.
+| | Unary | Server streaming |
+|---|---|---|
+| Return | `res *pb.GreetResponse, err error` | `stream grpc.ServerStreamingClient[pb.GreetResponse], err error` |
+| Result | Direct response struct mil gaya | Sirf ek **stream object** mila — abhi koi data nahi |
 
-Tumhe ye saari magic dikhti nahi — bas function call jaisa feel hota hai. **Yahi gRPC ka asli charm hai.**
+`client.GreetManyTimes(...)` return karta hai — ye method `greet_grpc.pb.go` me defined hai:
+
+```40:54:proto/greet_grpc.pb.go
+func (c *greetServiceClient) GreetManyTimes(ctx context.Context, in *GreetRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[GreetResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &GreetService_ServiceDesc.Streams[0], GreetService_GreetManyTimes_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[GreetRequest, GreetResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+```
+
+Ye internally:
+
+1. HTTP/2 stream open kiya (`NewStream`).
+2. Tumhari request `&pb.GreetRequest{FirstName: "Rahul Bisht"}` ko bytes me convert karke wire pe bheji (`SendMsg`).
+3. `CloseSend()` call kiya — server ko bata diya "ab aur kuch nahi bhejunga".
+4. Tumhe stream object (`x`) wapas diya — tum is pe `Recv()` chala sakte ho.
+
+Aur ye sab **yahan tak server-side handler shayad chal bhi nahi raha** — server ko request mili, dispatch ho gaya, handler chalu. Lekin tumne kuch padha nahi yet. Padhne ke liye Step 5 hai.
 
 ```go
 if err != nil {
@@ -192,37 +239,158 @@ if err != nil {
 }
 ```
 
-`err` non-nil hota hai jab:
+`err` non-nil tab hota hai jab stream open nahi ho saka — connection issue, malformed request, server unreachable. **Note**: stream open hone ke baad `err` aane wali hain `Recv()` calls me, isme nahi.
 
-- Network problem (server down, connection drop)
-- Server ne `status.Error(codes.X, ...)` return kiya
-- Timeout hua (`codes.DeadlineExceeded`)
-- Cancellation (`codes.Canceled`)
-
-### Final print
+### Step 5: Recv loop — server streaming ka heart
 
 ```go
-log.Printf("Greet response: %s", res.GetResult())
+for {
+    res, err := stream.Recv()
+    if err == io.EOF {
+        break
+    }
+    if err != nil {
+        log.Fatalf("Streaming for the Request Failed")
+    }
+    log.Printf("Response: %s", res.GetResult())
+}
 ```
 
-Note `res.GetResult()` — same nil-safe getter pattern. Output milega:
+Ye **infinite for loop** hai jo server se messages padhta jaata hai jab tak EOF na aaye.
+
+#### Anatomy of one iteration
+
+```go
+res, err := stream.Recv()
+```
+
+`stream.Recv()` block karta hai jab tak:
+
+- ek naya `*pb.GreetResponse` aaye → `res` me, `err = nil`
+- stream gracefully close ho jaaye → `res = nil`, `err = io.EOF`
+- error aa jaaye → `res = nil`, `err = some error`
+
+#### `if err == io.EOF { break }` — clean exit
+
+Server jab apna handler return karta hai (`return nil`), gRPC framework HTTP/2 trailers me `END_STREAM` flag bhejta hai. Client side `Recv()` is ko detect karke `io.EOF` deta hai — yahi hai "stream khatam, koi aur message nahi aayega" ka standard signal.
+
+> **Important nuance**: `io.EOF` ek **sentinel error** hai (specific reference). `err == io.EOF` comparison kaam karta hai. Lekin agar future me wrapped error use karna ho to `errors.Is(err, io.EOF)` zyada robust pattern hai.
+
+#### `if err != nil { log.Fatalf(...) }` — error case
+
+Yahan agar `err` non-nil hai aur `io.EOF` nahi hai, to **kuch galat hua**:
+
+- Server ne handler me error return kiya (`status.Error(codes.Internal, ...)`)
+- Network drop ho gaya
+- Context timeout ya cancel hua
+
+Tumhare current code me sirf `log.Fatalf("Streaming for the Request Failed")` likha hai — **error variable pass nahi kiya**. Better:
+
+```go
+if err != nil {
+    log.Fatalf("Streaming failed: %v", err)
+}
+```
+
+Iss tarah actual error message dikhega, jisme grpc status code (`code = Internal desc = ...`) bhi included hoga — debugging bohot easy.
+
+#### `log.Printf("Response: %s", res.GetResult())` — print
+
+Har response message ka `Result` field print karta hai. `res.GetResult()` nil-safe getter hai (just like server side ka `in.GetFirstName()`).
+
+10 iterations ke baad output aisa milega:
 
 ```
-Greet response: Hello Rahul
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 0
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 1
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 2
+...
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 9
 ```
+
+(Server me delay nahi hai to sab ek dum se aayenge.)
 
 ---
 
-## Server vs Client compared
+## Recv loop — common patterns
+
+### Pattern 1: idiomatic loop (jaise tumne likha)
+
+```go
+for {
+    res, err := stream.Recv()
+    if err == io.EOF {
+        break
+    }
+    if err != nil {
+        return err
+    }
+    // process res
+}
+```
+
+### Pattern 2: errors.Is for safety
+
+```go
+for {
+    res, err := stream.Recv()
+    if errors.Is(err, io.EOF) {
+        break
+    }
+    if err != nil {
+        return err
+    }
+    // process res
+}
+```
+
+### Pattern 3: collect into slice
+
+```go
+var results []*pb.GreetResponse
+for {
+    res, err := stream.Recv()
+    if err == io.EOF {
+        break
+    }
+    if err != nil {
+        return nil, err
+    }
+    results = append(results, res)
+}
+return results, nil
+```
+
+### Pattern 4: ctx-aware cancel from outside
+
+```go
+for {
+    select {
+    case <-ctx.Done():
+        return ctx.Err()
+    default:
+    }
+
+    res, err := stream.Recv()
+    // ... handling
+}
+```
+
+(`Recv` already ctx-aware hota hai — ye usually optional check hai.)
+
+---
+
+## Server vs Client compared (server streaming)
 
 | Step | Server | Client |
 |---|---|---|
 | 1 | `net.Listen("tcp", addr)` | `grpc.NewClient(addr, ...)` |
 | 2 | `grpc.NewServer()` | `pb.NewGreetServiceClient(conn)` |
 | 3 | `pb.RegisterGreetServiceServer(s, &Server{})` | `context.WithTimeout(ctx, 5s)` |
-| 4 | `s.Serve(lis)` | `client.Greet(ctx, req)` |
+| 4 | `s.Serve(lis)` (blocks forever) | `stream, _ := client.GreetManyTimes(ctx, req)` |
+| 5 | Handler with `stream.Send(...)` loop | Client with `stream.Recv()` loop |
 
-Symmetric structure hai — yaad rakhna easy.
+Symmetric structure — server `Send` karta hai jab tak return na ho, client `Recv` karta hai jab tak EOF na aaye.
 
 ---
 
@@ -232,11 +400,11 @@ Dono ko alag-alag terminals me chalao:
 
 ```powershell
 # Terminal 1 — server (pehle start karo)
-cd "gRPC project\greet"
+cd "gRPC project\greet Server Streaming"
 go run ./server
 
 # Terminal 2 — client (server up hone ke baad)
-cd "gRPC project\greet"
+cd "gRPC project\greet Server Streaming"
 go run ./client
 ```
 
@@ -244,12 +412,35 @@ Output:
 
 ```
 # server terminal:
-2026/06/01 09:00:00 Listening on 0.0.0.0:50051
-2026/06/01 09:00:05 Greet invoked with: Rahul
+2026/06/06 23:30:00 Listening on 0.0.0.0:50051
+Stream Function initiated
 
 # client terminal:
-2026/06/01 09:00:05 Greet response: Hello Rahul
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 0
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 1
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 2
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 3
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 4
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 5
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 6
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 7
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 8
+2026/06/06 23:30:00 Response: Changes for the User Rahul Bisht and time 9
 ```
+
+10 lines — ek-ek `Send()` se ek-ek `Recv()` corresponding. Phir client clean exit kar deta hai (loop me `io.EOF` aane se `break`).
+
+---
+
+## Common galtiyaan
+
+| Bug | Lakshan | Fix |
+|---|---|---|
+| `Recv()` loop me `if err == io.EOF` skip karna | Loop kabhi exit nahi karega, bas blocked rahega ya panic karega `nil` deref pe | Always check `io.EOF` first |
+| Error me `err` variable include na karna | Log me sirf "Failed" likha — kya hua nahi pata | `log.Fatalf("...: %v", err)` |
+| `defer cancel()` bhulna | Goroutine leak | Hamesha `defer cancel()` |
+| `client.GreetManyTimes(ctx, req)` ka return type `*GreetResponse` expect karna | Compile error | Vo stream object hai, `*GreetResponse` nahi |
+| Stream pe `Send` call karne ki koshish (client side) | Compile error / runtime error | Server streaming me client sirf ek baar request bhejta hai (vo `client.GreetManyTimes(...)` call ke andar pehle hi ho jaata hai) |
 
 ---
 
@@ -261,7 +452,11 @@ Output:
 | `insecure.NewCredentials()` | TLS off (dev only) |
 | `defer conn.Close()` | Cleanup connection |
 | `pb.NewGreetServiceClient(conn)` | Typed stub on top of raw conn |
-| `context.WithTimeout(...)` | Deadline for the RPC |
+| `context.WithTimeout(...)` | Deadline for the entire stream |
 | `defer cancel()` | Free context resources |
-| `client.Greet(ctx, req)` | Actual network call (looks local) |
+| `client.GreetManyTimes(ctx, req)` | Stream **open** karne ki call (returns stream object, not data) |
+| `stream.Recv()` | Ek message padhna; multiple times call hota hai |
+| `err == io.EOF` | Stream khatam ka signal |
 | `res.GetResult()` | nil-safe response field access |
+
+> **Server streaming client ka mental model**: `GreetManyTimes(...)` "stream open kiya", phir `for { Recv() }` "messages padhe jab tak EOF". Ek call → many responses, instead of ek call → ek response.

@@ -1,6 +1,8 @@
 # `server/main.go` — Server ka bootstrap
 
-Iss file ka **ek hi kaam** hai: gRPC server ko khada karna aur connections accept karne lagana. Actual business logic (yaani `Greet` ka kya kaam hai) is file me **nahi** hai — vo [`server/greet.go`](./server-greet.go.md) me hai. Ye separation jaan-bujh ke ki gayi hai: bootstrap alag, handlers alag.
+Iss file ka **ek hi kaam** hai: gRPC server ko khada karna aur connections accept karne lagana. Actual business logic (yaani `GreetManyTimes` streaming handler ka kya kaam hai) is file me **nahi** hai — vo [`server/greet.go`](./server-greet.go.md) me hai. Ye separation jaan-bujh ke ki gayi hai: bootstrap alag, handlers alag.
+
+> **Iss project ke baare me ek baat**: bootstrap code unary aur server streaming dono me **bilkul same** hota hai. `grpc.NewServer()`, `pb.RegisterGreetServiceServer(...)`, `s.Serve(lis)` — sab ka behavior identical hai. gRPC framework khud decide karta hai ki kis RPC ke liye unary handler chalana hai aur kis ke liye streaming handler — vo info `GreetService_ServiceDesc` (jo `greet_grpc.pb.go` me banti hai) se nikalti hai. Yaani: tumhara server boilerplate change nahi hua, sirf handler ka logic change hua.
 
 ## Pura file (clean version)
 
@@ -85,11 +87,11 @@ Ye chhoti si line gRPC ka sabse important "trick" hai. Do reasons:
 
 #### Reason 1 — Interface satisfaction
 
-`greet_grpc.pb.go` me ek interface hai:
+`greet_grpc.pb.go` me ek interface hai (server streaming version):
 
 ```go
 type GreetServiceServer interface {
-    Greet(context.Context, *GreetRequest) (*GreetResponse, error)
+    GreetManyTimes(*GreetRequest, grpc.ServerStreamingServer[GreetResponse]) error
     mustEmbedUnimplementedGreetServiceServer()  // <-- ye lowercase hai, unexported
 }
 ```
@@ -100,10 +102,10 @@ Yeh **forced embedding pattern** kehlata hai — gRPC team ne specifically isliy
 
 #### Reason 2 — Forward compatibility
 
-Aaj proto me sirf `Greet` RPC hai. Kal agar proto me `GreetManyTimes` add ho gaya, to:
+Aaj proto me sirf `GreetManyTimes` RPC hai. Kal agar proto me `GreetEveryone` (ya kuch aur naya) add ho gaya, to:
 
 - **Bina embedding** ke: tumhara server compile fail kar dega kyunki interface me ab 2 methods hain aur tumne sirf 1 implement kiya.
-- **With embedding**: `UnimplementedGreetServiceServer` ke andar default `GreetManyTimes` already hai jo `codes.Unimplemented` return karta hai. Tumhara server compile chalu rahega; bas us nayi RPC pe call karne pe error milega — jo logical hai.
+- **With embedding**: `UnimplementedGreetServiceServer` ke andar default `GreetEveryone` already hai jo `codes.Unimplemented` return karta hai. Tumhara server compile chalu rahega; bas us nayi RPC pe call karne pe error milega — jo logical hai.
 
 > Iska summary: **embedding karna pure project me sabse zaruri 1 line hai**.
 
@@ -146,18 +148,18 @@ pb.RegisterGreetServiceServer(s, &Server{})
 
 Ye **wiring** step hai. Iska matlab:
 
-> "Hey gRPC runtime `s`, agar koi `/greet.GreetService/Greet` ko call kare, to is `&Server{}` instance ke `Greet` method ko trigger karna."
+> "Hey gRPC runtime `s`, agar koi `/greet.GreetService/GreetManyTimes` ko call kare, to is `&Server{}` instance ke `GreetManyTimes` method ko streaming-handler bridge ke through trigger karna."
 
 `RegisterGreetServiceServer` function `protoc-gen-go-grpc` ne automatically generate kiya tha tumhare proto se. Iska body:
 
-```83:87:gRPC project/greet/proto/greet_grpc.pb.go
+```92:95:proto/greet_grpc.pb.go
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&GreetService_ServiceDesc, srv)
 ```
 
-Internally vo `GreetService_ServiceDesc` use karta hai jo method-name → handler ka mapping hai.
+Internally vo `GreetService_ServiceDesc` use karta hai jo method-name → handler ka mapping hai. Streaming version me `Methods` array empty hai aur `Streams` array me `GreetManyTimes` register hota hai (`ServerStreams: true` flag ke saath) — issi se gRPC runtime ko pata chalta hai ki dispatching streaming-style hogi.
 
 > Agar tum **ye line bhul gaye**, to server start to ho jaayega lekin har RPC pe client ko `unknown service: greet.GreetService` error milega.
 
@@ -187,8 +189,9 @@ Isiliye `s.Serve(lis)` `main()` ki **last** line hota hai — iske baad kuch lik
 | Embed `pb.GreetRequest` instead of `Unimplemented...` | Compile error: interface satisfy nahi |  Embed `pb.UnimplementedGreetServiceServer` |
 | `s.Server(conn)` likhna | Compile error: `Server` undefined method | `s.Serve(lis)` |
 | Variable naam `conn` rakhna | Confusion, koi crash nahi | Rakho `lis` (it's a listener) |
-| `Greet` method ko **dono** `main.go` aur `greet.go` me likhna | Compile error: `method already declared` | Ek hi jagah rakho (we kept it in greet.go) |
+| `GreetManyTimes` method ko **dono** `main.go` aur `greet.go` me likhna | Compile error: `method already declared` | Ek hi jagah rakho (we kept it in greet.go) |
 | `RegisterGreetServiceServer` skip kar dena | Server chalu, lekin RPC pe `Unimplemented` | Step 3 mat bhulo |
+| Streaming handler me `(*Res, error)` return karna | Compile error: signature mismatch with `GreetServiceServer` interface | Sahi signature: `(in *Req, stream grpc.ServerStreamingServer[Res]) error` |
 
 ---
 
