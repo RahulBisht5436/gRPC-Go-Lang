@@ -1,0 +1,21 @@
+syntax ="proto3";
+//convention package name should be all small case
+package clientStream ;
+
+// package name for the Go file need to be all in smalll case
+option go_package="example.com/clientStream/proto";
+
+
+message UsersRequest{
+    string name =1;
+}
+
+message UserResponse{
+    string Result =1;
+}
+
+
+service UserService{
+    rpc SendUser(stream UsersRequest) returns (UserResponse);
+}
+
